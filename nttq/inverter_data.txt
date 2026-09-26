@@ -1,0 +1,6 @@
+# Example inverter readings used by nttq_data.cpp.
+inverter_id=1
+dc_voltage_v=378.5
+ac_power_w=2450
+battery_percent=82
+status=1

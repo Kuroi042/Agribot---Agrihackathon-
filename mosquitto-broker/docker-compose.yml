@@ -1,0 +1,23 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: nttq-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+  broker:
+    build:
+      context: /home/kenshin/Desktop/DataProject/nttq
+      dockerfile: Dockerfile.broker
+    container_name: nttq-broker
+    environment:
+      MQTT_HOST: mosquitto
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
