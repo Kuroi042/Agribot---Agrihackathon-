@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -26,6 +27,10 @@ std::map<std::string, std::string> readValues(const std::string& path) {
     std::map<std::string, std::string> values; std::string line;
     while (std::getline(in, line)) { if (line.empty() || line[0] == '#') continue; const auto eq = line.find('='); if (eq != std::string::npos) values[line.substr(0, eq)] = line.substr(eq + 1); }
     return values;
+}
+std::string readTextFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary); if (!in) throw std::runtime_error("Cannot open " + path);
+    std::ostringstream content; content << in.rdbuf(); return content.str();
 }
 const std::string& required(const std::map<std::string, std::string>& values, const char* key) {
     const auto it = values.find(key);
@@ -54,6 +59,35 @@ std::string faultsJson(const std::map<std::string, std::string>& values) {
         first = false;
     }
     return output + ']';
+}
+std::string progressBar(int percent) {
+    constexpr int width = 24;
+    const int filled = percent * width / 100;
+    return "[" + std::string(filled, '#') + std::string(width - filled, '-') + "] " + std::to_string(percent) + "%";
+}
+std::string currentTime() {
+    const std::time_t now = std::time(nullptr); std::tm local{};
+    localtime_r(&now, &local);
+    char text[32]; std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local);
+    return text;
+}
+void showDashboard(std::size_t fileSize, std::size_t telemetrySize, std::size_t encryptedSize,
+                   int progress, const std::string& updatedAt, const std::string& status) {
+    constexpr int width = 54;
+    const auto row = [](const std::string& text) {
+        std::cout << "| " << std::left << std::setw(width - 2) << text << "|\n";
+    };
+    std::cout << "\033[2J\033[H+" << std::string(width, '-') << "+\n";
+    row("🌱 INVERTER DATA DASHBOARD");
+    std::cout << "+" << std::string(width, '-') << "+\n";
+    row("📄 Original file: " + std::to_string(fileSize) + " bytes");
+    row("📡 Telemetry data: " + std::to_string(telemetrySize) + " bytes");
+    row("🔒 Encrypted data: " + std::to_string(encryptedSize) + " bytes");
+    std::cout << "+" << std::string(width, '-') << "+\n";
+    row("🚀 Transmitted: " + progressBar(progress));
+    row("🕒 Last update: " + updatedAt);
+    row(status);
+    std::cout << "+" << std::string(width, '-') << "+\n" << std::flush;
 }
 std::vector<std::uint8_t> loadTelemetry(const std::string& path) {
     const auto values = readValues(path);
@@ -97,33 +131,26 @@ std::vector<std::uint8_t> encrypt(const std::vector<std::uint8_t>& plain) {
     EVP_CIPHER_CTX_free(ctx); if (!ok) throw std::runtime_error("Encryption failed"); cipher.resize(n + last);
     std::vector<std::uint8_t> result; result.insert(result.end(), salt.begin(), salt.end()); result.insert(result.end(), iv.begin(), iv.end()); result.insert(result.end(), tag.begin(), tag.end()); result.insert(result.end(), cipher.begin(), cipher.end()); return result;
 }
-void printHex(const std::vector<std::uint8_t>& bytes) {
-    for (const auto byte : bytes)
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte) << ' ';
-    std::cout << std::dec << std::setfill(' ') << '\n';
-}
 int main(int argc, char** argv) {
     try {
-        const auto telemetry = loadTelemetry(argc > 1 ? argv[1] : "inverter_data.txt"); const auto encrypted = encrypt(telemetry);
+        const std::string inputPath = argc > 1 ? argv[1] : "inverter_data.txt";
+        const auto sourceText = readTextFile(inputPath);
+        const auto telemetry = loadTelemetry(inputPath); const auto encrypted = encrypt(telemetry);
+        std::vector<std::uint8_t> body; putString(body, kTopic); body.insert(body.end(), encrypted.begin(), encrypted.end());
+        std::vector<std::uint8_t> publish{0x30}; appendLength(publish, body.size()); publish.insert(publish.end(), body.begin(), body.end());
+        showDashboard(sourceText.size(), telemetry.size(), encrypted.size(), 0, currentTime(), "🟡 Status: Sending");
         const char* host = std::getenv("MQTT_HOST"); if (!host) host = "127.0.0.1";
         addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; addrinfo* addresses = nullptr;
         if (getaddrinfo(host, "1883", &hints, &addresses) != 0) throw std::runtime_error("Cannot resolve MQTT_HOST");
         const int fd = socket(addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
-        std::cout << "[debug] Connecting to Mosquitto at " << host << ':' << kPort << "...\n";
         if (fd < 0 || connect(fd, addresses->ai_addr, addresses->ai_addrlen) != 0) {
             freeaddrinfo(addresses);
             throw std::runtime_error("Cannot connect to Mosquitto on port 1883");
         }
         freeaddrinfo(addresses);
         connectMqtt(fd);
-        std::cout << "[debug] MQTT CONNECT accepted by Mosquitto.\n";
-        std::vector<std::uint8_t> body; putString(body, kTopic); body.insert(body.end(), encrypted.begin(), encrypted.end());
-        std::vector<std::uint8_t> publish{0x30}; appendLength(publish, body.size()); publish.insert(publish.end(), body.begin(), body.end());
-        std::cout << "[debug] Sending MQTT PUBLISH to topic '" << kTopic << "' (" << publish.size() << " bytes): "; printHex(publish);
-        std::cout << "[debug] Encrypted payload (" << encrypted.size() << " bytes): "; printHex(encrypted);
         sendAll(fd, publish);
-        std::cout << "[debug] MQTT PUBLISH socket write completed.\n";
         close(fd);
-        std::cout << "Published encrypted inverter data to " << kTopic << ".\n";
+        showDashboard(sourceText.size(), telemetry.size(), encrypted.size(), 100, currentTime(), "🟢 Status: Normal");
     } catch (const std::exception& e) { std::cerr << "Producer error: " << e.what() << '\n'; return 1; }
 }
