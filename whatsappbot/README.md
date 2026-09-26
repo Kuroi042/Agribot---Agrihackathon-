@@ -10,6 +10,14 @@ Italian. The choice is stored for that Telegram chat. Pump-status labels and
 fault descriptions are translated; device measurements retain their standard
 numeric units (V, A, kW, °C, m³/h, and bar).
 
+Use **7 - Performance graphs** to receive a trend chart of AC output power,
+solar DC voltage, and inverter temperature. The chart becomes available after
+at least two telemetry updates have been received.
+
+Use **8 - Send interval** to set the delay between NTTQ telemetry packages from
+0.02 to 60 minutes. The default is 0.17 minutes (10 seconds); the sender applies a changed value
+after completing its current wait cycle.
+
 ## MQTT contract
 
 The decrypting Mosquitto broker publishes validated JSON to

@@ -32,9 +32,20 @@ def initialize_database() -> None:
             """CREATE TABLE IF NOT EXISTS user_preferences (
                 chat_id INTEGER PRIMARY KEY, language TEXT NOT NULL)"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS telemetry_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL,
+                fault_codes TEXT NOT NULL DEFAULT '[]', recorded_at TEXT NOT NULL)"""
+        )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(telemetry_history)")}
+        if "fault_codes" not in columns:
+            connection.execute("ALTER TABLE telemetry_history ADD COLUMN fault_codes TEXT NOT NULL DEFAULT '[]'")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS telemetry_history_recorded_at ON telemetry_history(recorded_at)"
+        )
 
 
-def save_state(payload: dict[str, Any], updated_at: str) -> None:
+def save_state(payload: dict[str, Any], updated_at: str, faults: list[dict[str, str]] | None = None) -> None:
     with connect() as connection:
         connection.execute(
             """INSERT INTO inverter_state (id, payload, updated_at) VALUES (1, ?, ?)
@@ -42,6 +53,26 @@ def save_state(payload: dict[str, Any], updated_at: str) -> None:
                updated_at=excluded.updated_at""",
             (json.dumps(payload, separators=(",", ":")), updated_at),
         )
+        connection.execute(
+            "INSERT INTO telemetry_history (payload, fault_codes, recorded_at) VALUES (?, ?, ?)",
+            (json.dumps(payload, separators=(",", ":")), json.dumps([fault["code"] for fault in faults or []]), updated_at),
+        )
+
+
+def get_history(limit: int = 1440) -> list[dict[str, Any]]:
+    initialize_database()
+    with connect() as connection:
+        rows = connection.execute(
+            """SELECT payload, fault_codes, recorded_at FROM telemetry_history
+               ORDER BY id DESC LIMIT ?""", (limit,)
+        ).fetchall()
+    history = []
+    for row in reversed(rows):
+        payload = json.loads(row["payload"])
+        payload["recorded_at"] = row["recorded_at"]
+        payload["fault_codes"] = json.loads(row["fault_codes"])
+        history.append(payload)
+    return history
 
 
 def get_state() -> dict[str, Any] | None:

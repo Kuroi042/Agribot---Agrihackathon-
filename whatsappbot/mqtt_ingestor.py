@@ -137,8 +137,9 @@ def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) ->
             raise ValueError("payload must be a JSON object")
         state = normalize(raw)
         timestamp = datetime.now(timezone.utc).isoformat()
-        save_state(state, timestamp)
-        replace_faults(derive_faults(state, raw.get("faults", [])), timestamp)
+        faults = derive_faults(state, raw.get("faults", []))
+        save_state(state, timestamp, faults)
+        replace_faults(faults, timestamp)
         print(f"Stored telemetry packet at {timestamp}")
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         print(f"Rejected invalid packet: {exc}")

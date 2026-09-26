@@ -26,10 +26,12 @@ services:
       AGRIBOT_DB_PATH: /data/agribot.db
       MQTT_HOST: host.docker.internal
       MQTT_PORT: "1883"
+      PUBLISH_INTERVAL_FILE: /nttq/publish_interval_seconds.txt
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - agribot-data:/data
+      - ../nttq:/nttq
     depends_on:
       - mqtt-ingestor
 

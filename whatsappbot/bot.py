@@ -1,8 +1,11 @@
 import asyncio
+from collections import Counter
+from io import BytesIO
 import json
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command, CommandStart
@@ -13,7 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 import paho.mqtt.client as mqtt
 
-from storage import get_faults, get_language, get_state, initialize_database, set_language
+from storage import get_faults, get_history, get_language, get_state, initialize_database, set_language
 
 load_dotenv()
 
@@ -21,6 +24,8 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_COMMAND_TOPIC = os.getenv("MQTT_COMMAND_TOPIC", "agribot/inverter/command")
+PUBLISH_INTERVAL_FILE = Path(os.getenv("PUBLISH_INTERVAL_FILE", "/nttq/publish_interval_seconds.txt"))
+DEFAULT_PUBLISH_INTERVAL_SECONDS = 10
 ALLOWED_CHAT_IDS = {
     int(value.strip())
     for value in os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
@@ -54,47 +59,47 @@ FAULT_RECOMMENDATIONS = {
 TEXT = {
     "en": {
         "language": "5 - 🌐 Language", "status_menu": "1 - 📊 Pump status", "faults_menu": "2 - ⚠️ Show faults",
-        "recommend_menu": "3 - 💡 Recommendation", "manual_menu": "4 - 🎛️ Manual control", "status_title": "⚡ Inverter {id} — {pump} ({health})",
+        "recommend_menu": "3 - 💡 Recommendation", "manual_menu": "4 - 🎛️ Manual control", "graphs_menu": "7 - 📈 Performance graphs", "interval_menu": "8 - ⏱️ Send interval", "status_title": "⚡ Inverter {id} — {pump} ({health})",
         "running": "Running", "stopped": "Stopped", "online": "Online", "offline": "Offline", "unknown": "unknown",
         "power": "Power", "output": "Output", "solar_input": "Solar input", "current": "Current", "solar_power": "Solar power",
         "mode": "Mode", "battery": "Battery", "water_level": "Water level", "temperature": "Temperature", "pump_speed": "Pump speed",
         "flow": "Flow", "pressure": "Pressure", "energy": "Energy", "today": "today", "total": "total", "runtime": "Runtime",
         "power_factor": "Power factor", "active_faults": "Active faults", "faults_available": "Available", "faults_not_available": "Not available", "last_update": "Last update", "no_faults": "None",
         "faults_title": "Active faults:", "no_active_faults": "No active faults.", "select_language": "Choose your language:",
-        "language_saved": "Language set to English.", "home": "Irrigation inverter control — choose an option:", "invalid_choice": "Choose 1-5 or use the buttons.",
+        "language_saved": "Language set to English.", "home": "Irrigation inverter control — choose an option:", "invalid_choice": "Choose 1-5, 7, or 8, or use the buttons.", "graph_wait": "Preparing performance graph…", "graph_empty": "Not enough telemetry yet. Send at least two inverter updates, then try again.", "graph_caption": "📈 Inverter performance and alert frequency — latest telemetry", "alerts_chart": "Most frequent alerts", "no_alerts_chart": "No alerts in saved telemetry", "interval_prompt": "Current send interval: {minutes} minutes. Enter a value from 0.02 to 60 minutes (0.17 ≈ 10 seconds).", "interval_saved": "Send interval set to {minutes} minutes.", "interval_invalid": "Enter a number from 0.02 to 60 minutes.",
     },
     "ar": {
         "language": "5 - 🌐 اللغة", "status_menu": "1 - 📊 حالة المضخة", "faults_menu": "2 - ⚠️ عرض الأعطال",
-        "recommend_menu": "3 - 💡 التوصية", "manual_menu": "4 - 🎛️ التحكم اليدوي", "status_title": "⚡ العاكس {id} — {pump} ({health})",
+        "recommend_menu": "3 - 💡 التوصية", "manual_menu": "4 - 🎛️ التحكم اليدوي", "graphs_menu": "7 - 📈 مخططات الأداء", "interval_menu": "8 - ⏱️ فترة الإرسال", "status_title": "⚡ العاكس {id} — {pump} ({health})",
         "running": "قيد التشغيل", "stopped": "متوقفة", "online": "متصل", "offline": "غير متصل", "unknown": "غير معروف",
         "power": "القدرة", "output": "الخرج", "solar_input": "دخل الطاقة الشمسية", "current": "التيار", "solar_power": "قدرة الطاقة الشمسية",
         "mode": "الوضع", "battery": "البطارية", "water_level": "مستوى الماء", "temperature": "الحرارة", "pump_speed": "سرعة المضخة",
         "flow": "التدفق", "pressure": "الضغط", "energy": "الطاقة", "today": "اليوم", "total": "الإجمالي", "runtime": "مدة التشغيل",
         "power_factor": "معامل القدرة", "active_faults": "الأعطال النشطة", "faults_available": "موجودة", "faults_not_available": "غير موجودة", "last_update": "آخر تحديث", "no_faults": "لا يوجد",
         "faults_title": "الأعطال النشطة:", "no_active_faults": "لا توجد أعطال نشطة.", "select_language": "اختر اللغة:",
-        "language_saved": "تم اختيار العربية.", "home": "التحكم في عاكس الري — اختر خياراً:", "invalid_choice": "اختر من 1 إلى 5 أو استخدم الأزرار.",
+        "language_saved": "تم اختيار العربية.", "home": "التحكم في عاكس الري — اختر خياراً:", "invalid_choice": "اختر من 1 إلى 5 أو 7 أو 8، أو استخدم الأزرار.", "graph_wait": "جارٍ إعداد مخطط الأداء…", "graph_empty": "لا توجد بيانات كافية بعد. أرسل تحديثين على الأقل ثم حاول مجدداً.", "graph_caption": "📈 أداء العاكس وتكرار التنبيهات — أحدث البيانات", "alerts_chart": "التنبيهات الأكثر تكراراً", "no_alerts_chart": "لا توجد تنبيهات في البيانات المحفوظة", "interval_prompt": "فترة الإرسال الحالية: {minutes} دقيقة. أدخل قيمة من 0.02 إلى 60 دقيقة (0.17 ≈ 10 ثوانٍ).", "interval_saved": "تم ضبط فترة الإرسال على {minutes} دقيقة.", "interval_invalid": "أدخل رقماً من 0.02 إلى 60 دقيقة.",
     },
     "it": {
         "language": "5 - 🌐 Lingua", "status_menu": "1 - 📊 Stato pompa", "faults_menu": "2 - ⚠️ Mostra guasti",
-        "recommend_menu": "3 - 💡 Raccomandazione", "manual_menu": "4 - 🎛️ Controllo manuale", "status_title": "⚡ Inverter {id} — {pump} ({health})",
+        "recommend_menu": "3 - 💡 Raccomandazione", "manual_menu": "4 - 🎛️ Controllo manuale", "graphs_menu": "7 - 📈 Grafici delle prestazioni", "interval_menu": "8 - ⏱️ Intervallo di invio", "status_title": "⚡ Inverter {id} — {pump} ({health})",
         "running": "In funzione", "stopped": "Fermata", "online": "Online", "offline": "Non disponibile", "unknown": "sconosciuto",
         "power": "Potenza", "output": "Uscita", "solar_input": "Ingresso solare", "current": "Corrente", "solar_power": "Potenza solare",
         "mode": "Modalità", "battery": "Batteria", "water_level": "Livello acqua", "temperature": "Temperatura", "pump_speed": "Velocità pompa",
         "flow": "Portata", "pressure": "Pressione", "energy": "Energia", "today": "oggi", "total": "totale", "runtime": "Ore di funzionamento",
         "power_factor": "Fattore di potenza", "active_faults": "Guasti attivi", "faults_available": "Disponibili", "faults_not_available": "Non disponibili", "last_update": "Ultimo aggiornamento", "no_faults": "Nessuno",
         "faults_title": "Guasti attivi:", "no_active_faults": "Nessun guasto attivo.", "select_language": "Scegli la lingua:",
-        "language_saved": "Lingua impostata su italiano.", "home": "Controllo inverter irrigazione — scegli un'opzione:", "invalid_choice": "Scegli da 1 a 5 o usa i pulsanti.",
+        "language_saved": "Lingua impostata su italiano.", "home": "Controllo inverter irrigazione — scegli un'opzione:", "invalid_choice": "Scegli da 1 a 5, 7 o 8, oppure usa i pulsanti.", "graph_wait": "Preparazione del grafico…", "graph_empty": "Dati insufficienti. Invia almeno due aggiornamenti dell'inverter e riprova.", "graph_caption": "📈 Prestazioni inverter e frequenza avvisi — telemetria recente", "alerts_chart": "Avvisi più frequenti", "no_alerts_chart": "Nessun avviso nella telemetria salvata", "interval_prompt": "Intervallo attuale: {minutes} minuti. Inserisci un valore da 0.02 a 60 minuti (0.17 ≈ 10 secondi).", "interval_saved": "Intervallo impostato su {minutes} minuti.", "interval_invalid": "Inserisci un numero da 0.02 a 60 minuti.",
     },
     "fr": {
         "language": "5 - 🌐 Langue", "status_menu": "1 - 📊 État de la pompe", "faults_menu": "2 - ⚠️ Voir les défauts",
-        "recommend_menu": "3 - 💡 Recommandation", "manual_menu": "4 - 🎛️ Commande manuelle", "status_title": "⚡ Onduleur {id} — {pump} ({health})",
+        "recommend_menu": "3 - 💡 Recommandation", "manual_menu": "4 - 🎛️ Commande manuelle", "graphs_menu": "7 - 📈 Graphiques de performance", "interval_menu": "8 - ⏱️ Intervalle d'envoi", "status_title": "⚡ Onduleur {id} — {pump} ({health})",
         "running": "En marche", "stopped": "Arrêtée", "online": "En ligne", "offline": "Hors ligne", "unknown": "inconnu",
         "power": "Puissance", "output": "Sortie", "solar_input": "Entrée solaire", "current": "Courant", "solar_power": "Puissance solaire",
         "mode": "Mode", "battery": "Batterie", "water_level": "Niveau d'eau", "temperature": "Température", "pump_speed": "Vitesse de la pompe",
         "flow": "Débit", "pressure": "Pression", "energy": "Énergie", "today": "aujourd'hui", "total": "total", "runtime": "Durée de fonctionnement",
         "power_factor": "Facteur de puissance", "active_faults": "Défauts actifs", "faults_available": "Disponibles", "faults_not_available": "Non disponibles", "last_update": "Dernière mise à jour", "no_faults": "Aucun",
         "faults_title": "Défauts actifs :", "no_active_faults": "Aucun défaut actif.", "select_language": "Choisissez votre langue :",
-        "language_saved": "Langue réglée sur le français.", "home": "Commande de l'onduleur d'irrigation — choisissez une option :", "invalid_choice": "Choisissez de 1 à 5 ou utilisez les boutons.",
+        "language_saved": "Langue réglée sur le français.", "home": "Commande de l'onduleur d'irrigation — choisissez une option :", "invalid_choice": "Choisissez de 1 à 5, 7 ou 8, ou utilisez les boutons.", "graph_wait": "Préparation du graphique…", "graph_empty": "Pas assez de données. Envoyez au moins deux mises à jour puis réessayez.", "graph_caption": "📈 Performance de l'onduleur et fréquence des alertes — télémétrie récente", "alerts_chart": "Alertes les plus fréquentes", "no_alerts_chart": "Aucune alerte dans la télémétrie enregistrée", "interval_prompt": "Intervalle actuel : {minutes} minutes. Entrez une valeur de 0.02 à 60 minutes (0.17 ≈ 10 secondes).", "interval_saved": "Intervalle réglé sur {minutes} minutes.", "interval_invalid": "Entrez un nombre de 0.02 à 60 minutes.",
     },
 }
 
@@ -111,6 +116,16 @@ FAULT_TEXT = {
 FAULT_TEXT["E056"]["fr"] = "Tension de batterie faible. Réduisez la charge et vérifiez la recharge et les bornes."
 FAULT_TEXT["E065"]["fr"] = "Surchauffe de l'onduleur. Réduisez la charge ou arrêtez la pompe et vérifiez la ventilation."
 FAULT_TEXT["E070"]["fr"] = "Niveau d'eau faible. Arrêtez la pompe jusqu'au retour à un niveau sûr."
+
+FAULT_NAMES = {
+    "E056": {"en": "Low battery voltage", "ar": "جهد البطارية منخفض", "it": "Tensione batteria bassa", "fr": "Tension de batterie faible"},
+    "E065": {"en": "Inverter over-temperature", "ar": "ارتفاع حرارة العاكس", "it": "Sovratemperatura inverter", "fr": "Surchauffe de l'onduleur"},
+    "E070": {"en": "Low water level", "ar": "مستوى الماء منخفض", "it": "Livello acqua basso", "fr": "Niveau d'eau faible"},
+    "LOW_SOLAR": {"en": "Low solar voltage", "ar": "جهد الطاقة الشمسية منخفض", "it": "Tensione solare bassa", "fr": "Tension solaire faible"},
+    "LOW_BATTERY": {"en": "Low battery", "ar": "شحن البطارية منخفض", "it": "Batteria scarica", "fr": "Batterie faible"},
+    "OVER_TEMPERATURE": {"en": "Inverter over-temperature", "ar": "ارتفاع حرارة العاكس", "it": "Sovratemperatura inverter", "fr": "Surchauffe de l'onduleur"},
+    "LOW_WATER": {"en": "Low water level", "ar": "مستوى الماء منخفض", "it": "Livello acqua basso", "fr": "Niveau d'eau faible"},
+}
 
 MODE_TEXT = {
     "irrigation": {"ar": "الري", "it": "irrigazione"},
@@ -132,8 +147,92 @@ def localized_mode(value: object, language: str) -> str:
     return MODE_TEXT.get(mode, {}).get(language, mode)
 
 
+def fault_name(code: str, language: str) -> str:
+    """Use a human-readable title in charts; codes must be verified per inverter model."""
+    return FAULT_NAMES.get(code, {}).get(language, "Unknown inverter alert")
+
+
+def get_publish_interval() -> float:
+    try:
+        value = int(PUBLISH_INTERVAL_FILE.read_text(encoding="utf-8").strip())
+        return value / 60 if 1 <= value <= 3600 else DEFAULT_PUBLISH_INTERVAL_SECONDS / 60
+    except (OSError, ValueError):
+        return DEFAULT_PUBLISH_INTERVAL_SECONDS / 60
+
+
+def set_publish_interval(minutes: float) -> None:
+    seconds = round(minutes * 60)
+    if not 1 <= seconds <= 3600:
+        raise ValueError("interval must be between 0.02 and 60 minutes")
+    PUBLISH_INTERVAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = PUBLISH_INTERVAL_FILE.with_suffix(".tmp")
+    temporary.write_text(f"{seconds}\n", encoding="utf-8")
+    temporary.replace(PUBLISH_INTERVAL_FILE)
+
+
+def format_minutes(minutes: float) -> str:
+    return f"{minutes:.2f}".rstrip("0").rstrip(".")
+
+
+async def update_callback_message(
+    callback: types.CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup,
+) -> None:
+    """Replace text messages, or send a new menu after a graph/photo callback."""
+    if callback.message.photo:
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer(text, reply_markup=reply_markup)
+    else:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+
+
+def build_performance_chart(history: list[dict[str, object]], language: str) -> bytes:
+    """Render the key output and health trends without writing graph files to disk."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    labels = {
+        "en": ("AC power (kW)", "DC voltage (V)", "Temperature (°C)"),
+        "ar": ("قدرة الخرج (كيلوواط)", "جهد التيار المستمر (فولت)", "الحرارة (°م)"),
+        "it": ("Potenza AC (kW)", "Tensione DC (V)", "Temperatura (°C)"),
+        "fr": ("Puissance AC (kW)", "Tension DC (V)", "Température (°C)"),
+    }.get(language, ("AC power (kW)", "DC voltage (V)", "Temperature (°C)"))
+    times = [datetime.fromisoformat(str(item["recorded_at"]).replace("Z", "+00:00")) for item in history]
+    power = [float(item["ac_power_w"]) / 1000 if item.get("ac_power_w") is not None else None for item in history]
+    voltage = [float(item["dc_voltage_v"]) if item.get("dc_voltage_v") is not None else None for item in history]
+    temperature = [float(item["temperature_c"]) if item.get("temperature_c") is not None else None for item in history]
+    figure, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
+    trend_axes = axes.flat
+    for axis, readings, label, color in zip(trend_axes, (power, voltage, temperature), labels, ("#f59e0b", "#2563eb", "#dc2626")):
+        axis.plot(times, readings, color=color, linewidth=2)
+        axis.set_ylabel(label)
+        axis.grid(alpha=0.25)
+        axis.tick_params(axis="x", labelrotation=25)
+    alerts_axis = axes[1, 1]
+    alert_counts = Counter(
+        code for item in history for code in item.get("fault_codes", []) if isinstance(code, str)
+    )
+    if alert_counts:
+        frequent_alerts = alert_counts.most_common(6)
+        alerts_axis.pie(
+            [count for _, count in frequent_alerts], labels=[fault_name(code, language) for code, _ in frequent_alerts],
+            autopct="%1.0f%%", startangle=90,
+        )
+        alerts_axis.set_title(t(language, "alerts_chart"))
+    else:
+        alerts_axis.text(0.5, 0.5, t(language, "no_alerts_chart"), ha="center", va="center", wrap=True)
+        alerts_axis.set_axis_off()
+    figure.autofmt_xdate()
+    output = BytesIO()
+    figure.savefig(output, format="png", dpi=150)
+    plt.close(figure)
+    output.seek(0)
+    return output.getvalue()
+
+
 class ControlForm(StatesGroup):
     waiting_for_speed = State()
+    waiting_for_interval = State()
 
 
 def menu_keyboard(language: str = "en") -> InlineKeyboardMarkup:
@@ -142,6 +241,8 @@ def menu_keyboard(language: str = "en") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t(language, "faults_menu"), callback_data="menu:faults")],
         [InlineKeyboardButton(text=t(language, "recommend_menu"), callback_data="menu:recommend")],
         [InlineKeyboardButton(text=t(language, "manual_menu"), callback_data="menu:manual")],
+        [InlineKeyboardButton(text=t(language, "graphs_menu"), callback_data="menu:graphs")],
+        [InlineKeyboardButton(text=t(language, "interval_menu"), callback_data="menu:interval")],
         [InlineKeyboardButton(text=t(language, "language"), callback_data="menu:language")],
     ])
 
@@ -289,7 +390,7 @@ async def home(callback: types.CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     language = get_language(callback.message.chat.id)
-    await callback.message.edit_text(t(language, "home"), reply_markup=menu_keyboard(language))
+    await update_callback_message(callback, t(language, "home"), menu_keyboard(language))
     await callback.answer()
 
 
@@ -298,7 +399,7 @@ async def choose_language(callback: types.CallbackQuery) -> None:
     if await reject_if_unauthorized(callback):
         return
     language = get_language(callback.message.chat.id)
-    await callback.message.edit_text(t(language, "select_language"), reply_markup=language_keyboard())
+    await update_callback_message(callback, t(language, "select_language"), language_keyboard())
     await callback.answer()
 
 
@@ -311,7 +412,7 @@ async def save_language(callback: types.CallbackQuery) -> None:
         await callback.answer("Unsupported language.", show_alert=True)
         return
     set_language(callback.message.chat.id, language)
-    await callback.message.edit_text(t(language, "language_saved"), reply_markup=menu_keyboard(language))
+    await update_callback_message(callback, t(language, "language_saved"), menu_keyboard(language))
     await callback.answer()
 
 
@@ -320,7 +421,7 @@ async def show_status(callback: types.CallbackQuery) -> None:
     if await reject_if_unauthorized(callback):
         return
     language = get_language(callback.message.chat.id)
-    await callback.message.edit_text(format_status(language), reply_markup=menu_keyboard(language))
+    await update_callback_message(callback, format_status(language), menu_keyboard(language))
     await callback.answer()
 
 
@@ -329,7 +430,35 @@ async def show_faults(callback: types.CallbackQuery) -> None:
     if await reject_if_unauthorized(callback):
         return
     language = get_language(callback.message.chat.id)
-    await callback.message.edit_text(format_faults(language), reply_markup=menu_keyboard(language))
+    await update_callback_message(callback, format_faults(language), menu_keyboard(language))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:graphs")
+async def show_graphs(callback: types.CallbackQuery) -> None:
+    if await reject_if_unauthorized(callback):
+        return
+    language = get_language(callback.message.chat.id)
+    await callback.answer(t(language, "graph_wait"))
+    history = await asyncio.to_thread(get_history)
+    if len(history) < 2:
+        await callback.message.answer(t(language, "graph_empty"), reply_markup=menu_keyboard(language))
+        return
+    image = await asyncio.to_thread(build_performance_chart, history, language)
+    await callback.message.answer_photo(
+        types.BufferedInputFile(image, filename="inverter-performance.png"),
+        caption=t(language, "graph_caption"),
+        reply_markup=menu_keyboard(language),
+    )
+
+
+@router.callback_query(F.data == "menu:interval")
+async def ask_publish_interval(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if await reject_if_unauthorized(callback):
+        return
+    language = get_language(callback.message.chat.id)
+    await state.set_state(ControlForm.waiting_for_interval)
+    await callback.message.answer(t(language, "interval_prompt", minutes=format_minutes(get_publish_interval())))
     await callback.answer()
 
 
@@ -345,7 +474,7 @@ async def show_recommendation(callback: types.CallbackQuery) -> None:
              InlineKeyboardButton(text="2 - No", callback_data="menu:home")],
         ])
     buttons.append([InlineKeyboardButton(text="Back", callback_data="menu:home")])
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await update_callback_message(callback, text, InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
 
@@ -355,8 +484,8 @@ async def confirm_recommendation(callback: types.CallbackQuery) -> None:
         return
     speed = float(callback.data.rsplit(":", 1)[1])
     ok, result = await asyncio.to_thread(publish_command, "set_speed", speed)
-    await callback.message.edit_text(
-        f"{'Confirmed' if ok else 'Not sent'}: {speed:g} Hz. {result}", reply_markup=menu_keyboard()
+    await update_callback_message(
+        callback, f"{'Confirmed' if ok else 'Not sent'}: {speed:g} Hz. {result}", menu_keyboard()
     )
     await callback.answer()
 
@@ -365,7 +494,7 @@ async def confirm_recommendation(callback: types.CallbackQuery) -> None:
 async def manual(callback: types.CallbackQuery) -> None:
     if await reject_if_unauthorized(callback):
         return
-    await callback.message.edit_text("Manual control:", reply_markup=manual_keyboard())
+    await update_callback_message(callback, "Manual control:", manual_keyboard())
     await callback.answer()
 
 
@@ -377,7 +506,7 @@ async def start_stop(callback: types.CallbackQuery) -> None:
     ok, result = await asyncio.to_thread(publish_command, command)
     await callback.answer(result, show_alert=not ok)
     if ok:
-        await callback.message.edit_text(f"{command.title()} command sent.", reply_markup=manual_keyboard())
+        await update_callback_message(callback, f"{command.title()} command sent.", manual_keyboard())
 
 
 @router.callback_query(F.data == "control:speed")
@@ -408,8 +537,25 @@ async def receive_speed(message: types.Message, state: FSMContext) -> None:
     )
 
 
+@router.message(ControlForm.waiting_for_interval)
+async def receive_publish_interval(message: types.Message, state: FSMContext) -> None:
+    if await reject_if_unauthorized(message):
+        return
+    language = get_language(message.chat.id)
+    try:
+        minutes = float((message.text or "").strip().replace(",", "."))
+        if not 0.02 <= minutes <= 60:
+            raise ValueError
+        await asyncio.to_thread(set_publish_interval, minutes)
+    except (OSError, ValueError):
+        await message.answer(t(language, "interval_invalid"))
+        return
+    await state.clear()
+    await message.answer(t(language, "interval_saved", minutes=format_minutes(minutes)), reply_markup=menu_keyboard(language))
+
+
 @router.message()
-async def numeric_menu(message: types.Message) -> None:
+async def numeric_menu(message: types.Message, state: FSMContext) -> None:
     if await reject_if_unauthorized(message):
         return
     language = get_language(message.chat.id)
@@ -425,6 +571,19 @@ async def numeric_menu(message: types.Message) -> None:
         await message.answer("Manual control:", reply_markup=manual_keyboard())
     elif choice == "5":
         await message.answer(t(language, "select_language"), reply_markup=language_keyboard())
+    elif choice == "7":
+        history = await asyncio.to_thread(get_history)
+        if len(history) < 2:
+            await message.answer(t(language, "graph_empty"), reply_markup=menu_keyboard(language))
+            return
+        image = await asyncio.to_thread(build_performance_chart, history, language)
+        await message.answer_photo(
+            types.BufferedInputFile(image, filename="inverter-performance.png"),
+            caption=t(language, "graph_caption"), reply_markup=menu_keyboard(language),
+        )
+    elif choice == "8":
+        await state.set_state(ControlForm.waiting_for_interval)
+        await message.answer(t(language, "interval_prompt", minutes=format_minutes(get_publish_interval())))
     else:
         await message.answer(t(language, "invalid_choice"), reply_markup=menu_keyboard(language))
 
