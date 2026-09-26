@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <netdb.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,7 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-constexpr int kPort = 1883; constexpr char kTopic[] = "inv/1/encrypted"; constexpr char kPassphrase[] = "change-this-demo-passphrase";
+constexpr int kPort = 1883; constexpr char kTopic[] = "inv/1/encrypted"; constexpr char kTelemetryTopic[] = "agribot/inverter/telemetry"; constexpr char kPassphrase[] = "change-this-demo-passphrase";
 void appendLength(std::vector<std::uint8_t>& out, std::size_t n) { do { auto b = static_cast<std::uint8_t>(n % 128); n /= 128; if (n) b |= 0x80; out.push_back(b); } while (n); }
 void putString(std::vector<std::uint8_t>& out, const std::string& s) { out.push_back(s.size() >> 8); out.push_back(s.size()); out.insert(out.end(), s.begin(), s.end()); }
 void sendAll(int fd, const std::vector<std::uint8_t>& b) { for (std::size_t p = 0; p < b.size();) { auto n = send(fd, b.data() + p, b.size() - p, 0); if (n <= 0) throw std::runtime_error("MQTT socket write failed"); p += n; } }
@@ -22,6 +23,15 @@ void connectMqtt(int fd) { std::vector<std::uint8_t> body; putString(body, "MQTT
 std::array<std::uint8_t, 32> keyFrom(const std::uint8_t* salt) { std::array<std::uint8_t, 32> key{}; if (PKCS5_PBKDF2_HMAC(kPassphrase, -1, salt, 16, 100000, EVP_sha256(), key.size(), key.data()) != 1) throw std::runtime_error("Key derivation failed"); return key; }
 std::vector<std::uint8_t> decrypt(const std::vector<std::uint8_t>& record) { if (record.size() < 51) throw std::runtime_error("Encrypted message is too short"); const auto key = keyFrom(record.data()); const auto* iv = record.data() + 16; const auto* tag = record.data() + 28; const auto* cipher = record.data() + 44; const auto size = record.size() - 44; std::vector<std::uint8_t> plain(size); EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new(); if (!ctx) throw std::runtime_error("Decryption context failed"); int n = 0, last = 0; const bool ok = EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, key.data(), iv) == 1 && EVP_DecryptUpdate(ctx, plain.data(), &n, cipher, size) == 1 && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, const_cast<std::uint8_t*>(tag)) == 1 && EVP_DecryptFinal_ex(ctx, plain.data() + n, &last) == 1; EVP_CIPHER_CTX_free(ctx); if (!ok) throw std::runtime_error("Authentication failed: message was altered or key is wrong"); plain.resize(n + last); return plain; }
 std::vector<std::uint8_t> publishPayload(const std::vector<std::uint8_t>& p) { std::size_t pos = 1, rem = 0, mult = 1; std::uint8_t b; do { b = p.at(pos++); rem += (b & 127) * mult; mult *= 128; } while (b & 128); if ((p[0] & 0xf0) != 0x30 || pos + rem != p.size()) throw std::runtime_error("Expected MQTT PUBLISH"); const auto topicSize = (p.at(pos) << 8) | p.at(pos + 1); pos += 2; if (pos + topicSize > p.size()) throw std::runtime_error("Malformed MQTT topic"); const std::string topic(p.begin() + pos, p.begin() + pos + topicSize); if (topic != kTopic) throw std::runtime_error("Unexpected MQTT topic"); pos += topicSize; return {p.begin() + pos, p.end()}; }
+void publishTelemetry(int fd, const std::vector<std::uint8_t>& plain) {
+    std::vector<std::uint8_t> body;
+    putString(body, kTelemetryTopic);
+    body.insert(body.end(), plain.begin(), plain.end());
+    std::vector<std::uint8_t> packet{0x30};
+    appendLength(packet, body.size());
+    packet.insert(packet.end(), body.begin(), body.end());
+    sendAll(fd, packet);
+}
 int main() { try {
     std::cout.setf(std::ios::unitbuf);
     const char* host = std::getenv("MQTT_HOST"); if (!host) host = "127.0.0.1";
@@ -38,14 +48,10 @@ int main() { try {
             const auto encryptedRecord = publishPayload(packet);
             std::cout << "[receiver] Received encrypted MQTT payload (" << encryptedRecord.size() << " bytes). Starting decryption...\n";
             const auto plain = decrypt(encryptedRecord);
-            if (plain.size() != 7) throw std::runtime_error("Invalid decrypted inverter payload");
-            const auto voltage = static_cast<std::uint16_t>((plain[1] << 8) | plain[2]);
-            const auto power = static_cast<std::uint16_t>((plain[3] << 8) | plain[4]);
-            std::cout << std::fixed << std::setprecision(1)
-                      << "Decrypted inverter data:\nInverter ID: " << static_cast<int>(plain[0])
-                      << "\nDC voltage: " << voltage / 10.0 << " V\nAC power: " << power
-                      << " W\nBattery: " << static_cast<int>(plain[5]) << " %\nStatus: "
-                      << static_cast<int>(plain[6]) << "\n";
+            if (plain.size() < 2 || plain.size() > 4096 || plain.front() != '{' || plain.back() != '}') throw std::runtime_error("Invalid decrypted telemetry JSON");
+            publishTelemetry(fd, plain);
+            std::cout << "Decrypted inverter telemetry JSON: " << std::string(plain.begin(), plain.end()) << '\n';
+            std::cout << "[receiver] Published decrypted telemetry to " << kTelemetryTopic << "\n";
         } catch (const std::exception& e) {
             std::cerr << "[receiver] Ignoring invalid encrypted MQTT payload: " << e.what() << '\n';
         }

@@ -1,6 +1,35 @@
-# Example inverter readings used by nttq_data.cpp.
+# Required inverter telemetry. Values are validated before encryption.
 inverter_id=1
-dc_voltage_v=378.5
+dc_voltage_v=430.0
+ac_voltage_v=230.0
 ac_power_w=2450
+frequency_hz=50.0
+current_a=10.7
+power_factor=0.95
 battery_percent=82
+temperature_c=81.0
+rotation_rpm=1450
+water_level_percent=12
 status=1
+running=true
+available=true
+# Comma-separated fault codes. Use NONE when there are no device errors.
+# Supported codes and suggested first checks:
+# LOW_SOLAR           - Check panel shading, soiling, strings, and DC connections.
+# OVER_TEMPERATURE    - Stop if necessary; allow cooling and check ventilation/fans.
+# HIGH_CURRENT/OVER_CURRENT - Reduce load; inspect the pump, cable, and motor before restart.
+# LOW_CURRENT         - Stop and check for dry running, a loose cable, or a disconnected pump.
+# LOW_BATTERY         - Reduce demand and check battery state, charging, and terminals.
+# LOW_WATER           - Stop the pump and restore a safe source-water level.
+# DRY_RUN             - Stop the pump; prime it and inspect the suction line and source level.
+# OVERLOAD            - Stop the pump and inspect for a jammed pump or excessive load.
+# OVER_VOLTAGE        - Isolate the supply and have DC/AC supply settings checked.
+# UNDER_VOLTAGE       - Check the supply, battery, PV strings, and cable connections.
+# PHASE_LOSS          - Stop operation and have the input phases and wiring checked.
+# GROUND_FAULT        - Isolate power and have insulation/cabling checked by a qualified technician.
+# COMMUNICATION_FAILURE - Check controller, network, and communication wiring.
+# MOTOR_OVERHEAT      - Stop the motor; let it cool and inspect loading and ventilation.
+# PUMP_BLOCKED        - Stop and isolate power before clearing a blockage.
+# SENSOR_FAILURE      - Inspect the affected sensor and its wiring; replace if needed.
+# This sample intentionally publishes several faults for dashboard/bot testing.
+faults=LOW_SOLAR,OVER_TEMPERATURE,LOW_WATER,DRY_RUN

@@ -32,6 +32,26 @@ dp = Dispatcher(storage=MemoryStorage())
 dp.include_router(router)
 
 
+FAULT_RECOMMENDATIONS = {
+    "INVERTER_OFFLINE": "Do not send control commands. Check inverter power, communications, and the controller connection.",
+    "GROUND_FAULT": "Stop and isolate power. Have insulation, grounding, and cables checked by a qualified technician.",
+    "PHASE_LOSS": "Stop operation and have the supply phases, protection devices, and wiring checked.",
+    "OVER_VOLTAGE": "Stop operation if the condition persists. Check the PV/battery/AC supply and inverter settings.",
+    "OVER_TEMPERATURE": "Reduce load or stop the pump, allow cooling, then check airflow, fans, and enclosure temperature.",
+    "MOTOR_OVERHEAT": "Stop the motor, let it cool, and inspect the load, ventilation, and motor condition.",
+    "OVERLOAD": "Stop the pump and inspect for a jam, blocked pipework, or excessive mechanical load before restarting.",
+    "PUMP_BLOCKED": "Stop and isolate power before inspecting and clearing the pump or pipework blockage.",
+    "DRY_RUN": "Stop the pump. Restore source water, prime the pump, and inspect the suction line before restarting.",
+    "LOW_WATER": "Stop the pump or keep it stopped until the source-water level is safely restored.",
+    "LOW_BATTERY": "Reduce demand and check battery charge, charging source, and terminal connections.",
+    "UNDER_VOLTAGE": "Check the PV strings, battery, supply, and cable connections; avoid increasing the load.",
+    "OVER_CURRENT": "Reduce load and inspect the pump, cable, and motor before returning to normal speed.",
+    "LOW_CURRENT": "Stop and inspect for dry running, a loose cable, or a disconnected pump.",
+    "COMMUNICATION_FAILURE": "Check controller power, network settings, and communication wiring; do not rely on remote control until restored.",
+    "SENSOR_FAILURE": "Inspect the affected sensor and its wiring; replace or recalibrate it before relying on its reading.",
+}
+
+
 class ControlForm(StatesGroup):
     waiting_for_speed = State()
 
@@ -81,13 +101,20 @@ def format_status() -> str:
         return "No inverter data received yet. Start mqtt_ingestor.py and publish telemetry."
     return (
         "Pump status\n"
-        f"1. Speed: {fmt_number(state.get('frequency_hz'), 'Hz')}\n"
+        f"1. Inverter ID: {state.get('inverter_id', 'unknown')}\n"
         f"2. DC voltage: {fmt_number(state.get('dc_voltage_v'), 'V')}\n"
-        f"3. Current: {fmt_number(state.get('current_a'), 'A')}\n"
-        f"4. Pump: {'running' if state.get('running') else 'stopped'}\n"
-        f"5. Inverter: {'available' if state.get('available') else 'not available'}\n"
-        f"6. Rotation: {fmt_number(state.get('rotation_rpm'), 'RPM')}\n"
-        f"7. Water level: {fmt_number(state.get('water_level_percent'), '%')}\n"
+        f"3. AC voltage: {fmt_number(state.get('ac_voltage_v'), 'V')}\n"
+        f"4. AC power: {fmt_number(state.get('ac_power_w'), 'W')}\n"
+        f"5. Frequency: {fmt_number(state.get('frequency_hz'), 'Hz')}\n"
+        f"6. Current: {fmt_number(state.get('current_a'), 'A')}\n"
+        f"7. Power factor: {fmt_number(state.get('power_factor'), '')}\n"
+        f"8. Battery: {fmt_number(state.get('battery_percent'), '%')}\n"
+        f"9. Temperature: {fmt_number(state.get('temperature_c'), '°C')}\n"
+        f"10. Rotation: {fmt_number(state.get('rotation_rpm'), 'RPM')}\n"
+        f"11. Water level: {fmt_number(state.get('water_level_percent'), '%')}\n"
+        f"12. Status: {state.get('status', 'unknown')}\n"
+        f"13. Pump: {'running' if state.get('running') else 'stopped'}\n"
+        f"14. Inverter: {'available' if state.get('available') else 'not available'}\n"
         f"Last update: {state.get('updated_at', 'unknown')}"
     )
 
@@ -108,6 +135,9 @@ def recommendation() -> tuple[float | None, str]:
         return None, "No telemetry is available, so a safe speed cannot be suggested."
     current_speed = float(state["frequency_hz"])
     faults = {item["code"] for item in get_faults(active_only=True)}
+    for code, advice in FAULT_RECOMMENDATIONS.items():
+        if code in faults:
+            return None, advice
     if "HIGH_CURRENT" in faults or "LOW_SOLAR" in faults:
         suggested = max(0.0, current_speed - 3.0)
         return suggested, f"I suggest lowering speed from {current_speed:g} Hz to {suggested:g} Hz."

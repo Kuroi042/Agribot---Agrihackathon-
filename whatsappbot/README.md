@@ -7,11 +7,21 @@ Two processes cooperate through a small SQLite database:
 
 ## MQTT contract
 
-Publish compact JSON to `agribot/inverter/telemetry`:
+The decrypting Mosquitto broker publishes validated JSON to
+`agribot/inverter/telemetry` on MQTT port `1883`:
 
 ```json
-{"frequency_hz":50,"dc_voltage_v":750,"current_a":35,"running":true,"available":true,"rotation_rpm":1450,"water_level_percent":62,"faults":[]}
+{"inverter_id":1,"dc_voltage_v":378.5,"ac_voltage_v":230,"ac_power_w":2450,"frequency_hz":50,"current_a":10.7,"power_factor":0.95,"battery_percent":82,"temperature_c":34.5,"rotation_rpm":1450,"water_level_percent":62,"status":1,"running":true,"available":true,"faults":[]}
 ```
+
+Set the fields in `../nttq/inverter_data.txt`. The sender rejects values outside
+these input ranges: DC voltage 0–1000 V, AC voltage 0–300 V, frequency 0–60 Hz,
+current 0–500 A, power factor 0–1, battery/water 0–100%, temperature −40–125 °C,
+and rotation 0–10,000 RPM. These are application validation limits, not a
+certification claim for a particular electrical standard.
+
+Device fault codes are comma-separated in `faults`, for example
+`OVER_TEMPERATURE,LOW_WATER`. They appear in the Telegram **Show faults** view.
 
 The bot publishes control messages to `agribot/inverter/command`:
 

@@ -1,10 +1,13 @@
 #include <array>
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <openssl/evp.h>
@@ -18,21 +21,64 @@ constexpr int kPort = 1883;
 constexpr char kTopic[] = "inv/1/encrypted";
 constexpr char kPassphrase[] = "change-this-demo-passphrase"; // Change in both programs.
 
-struct Inverter { std::uint8_t id, battery, status; std::uint16_t voltageTenths, power; };
-
 std::map<std::string, std::string> readValues(const std::string& path) {
     std::ifstream in(path); if (!in) throw std::runtime_error("Cannot open " + path);
     std::map<std::string, std::string> values; std::string line;
     while (std::getline(in, line)) { if (line.empty() || line[0] == '#') continue; const auto eq = line.find('='); if (eq != std::string::npos) values[line.substr(0, eq)] = line.substr(eq + 1); }
     return values;
 }
-Inverter loadInverter(const std::string& path) {
-    const auto v = readValues(path); auto get = [&](const char* key) -> const std::string& { const auto it = v.find(key); if (it == v.end()) throw std::runtime_error(std::string("Missing ") + key); return it->second; };
-    const double volts = std::stod(get("dc_voltage_v")); const auto power = std::stoul(get("ac_power_w")); const auto battery = std::stoul(get("battery_percent"));
-    if (volts < 0 || volts > 6553.5 || power > 65535 || battery > 100) throw std::runtime_error("Inverter value is outside supported range");
-    return {static_cast<std::uint8_t>(std::stoul(get("inverter_id"))), static_cast<std::uint8_t>(battery), static_cast<std::uint8_t>(std::stoul(get("status"))), static_cast<std::uint16_t>(volts * 10 + .5), static_cast<std::uint16_t>(power)};
+const std::string& required(const std::map<std::string, std::string>& values, const char* key) {
+    const auto it = values.find(key);
+    if (it == values.end()) throw std::runtime_error(std::string("Missing ") + key);
+    return it->second;
 }
-std::vector<std::uint8_t> pack(const Inverter& d) { return {d.id, static_cast<std::uint8_t>(d.voltageTenths >> 8), static_cast<std::uint8_t>(d.voltageTenths), static_cast<std::uint8_t>(d.power >> 8), static_cast<std::uint8_t>(d.power), d.battery, d.status}; }
+double measurement(const std::map<std::string, std::string>& values, const char* key, double minimum, double maximum) {
+    const double value = std::stod(required(values, key));
+    if (value < minimum || value > maximum) throw std::runtime_error(std::string(key) + " is outside its permitted range");
+    return value;
+}
+bool flag(const std::map<std::string, std::string>& values, const char* key, bool fallback) {
+    const auto it = values.find(key); if (it == values.end()) return fallback;
+    if (it->second == "true" || it->second == "1") return true;
+    if (it->second == "false" || it->second == "0") return false;
+    throw std::runtime_error(std::string(key) + " must be true or false");
+}
+std::string faultsJson(const std::map<std::string, std::string>& values) {
+    const auto it = values.find("faults"); if (it == values.end() || it->second.empty() || it->second == "NONE") return "[]";
+    std::stringstream source(it->second); std::string fault, output = "["; bool first = true;
+    while (std::getline(source, fault, ',')) {
+        fault.erase(std::remove_if(fault.begin(), fault.end(), [](unsigned char c) { return std::isspace(c); }), fault.end());
+        if (fault.empty() || !std::all_of(fault.begin(), fault.end(), [](unsigned char c) { return std::isalnum(c) || c == '_'; })) throw std::runtime_error("faults must be comma-separated error codes");
+        if (!first) output += ',';
+        output += '"' + fault + '"';
+        first = false;
+    }
+    return output + ']';
+}
+std::vector<std::uint8_t> loadTelemetry(const std::string& path) {
+    const auto values = readValues(path);
+    const auto id = static_cast<unsigned>(measurement(values, "inverter_id", 1, 255));
+    const auto voltage = measurement(values, "dc_voltage_v", 0, 1000);
+    const auto acVoltage = measurement(values, "ac_voltage_v", 0, 300);
+    const auto power = measurement(values, "ac_power_w", 0, 65535);
+    const auto frequency = measurement(values, "frequency_hz", 0, 60);
+    const auto current = measurement(values, "current_a", 0, 500);
+    const auto factor = measurement(values, "power_factor", 0, 1);
+    const auto battery = measurement(values, "battery_percent", 0, 100);
+    const auto temperature = measurement(values, "temperature_c", -40, 125);
+    const auto rpm = measurement(values, "rotation_rpm", 0, 10000);
+    const auto water = measurement(values, "water_level_percent", 0, 100);
+    const auto status = static_cast<unsigned>(measurement(values, "status", 0, 255));
+    const bool running = flag(values, "running", status != 0); const bool available = flag(values, "available", true);
+    std::ostringstream json; json << std::fixed << std::setprecision(1)
+        << "{\"inverter_id\":" << id << ",\"dc_voltage_v\":" << voltage << ",\"ac_voltage_v\":" << acVoltage
+        << ",\"ac_power_w\":" << power << ",\"frequency_hz\":" << frequency << ",\"current_a\":" << current
+        << ",\"power_factor\":" << factor << ",\"battery_percent\":" << battery << ",\"temperature_c\":" << temperature
+        << ",\"rotation_rpm\":" << rpm << ",\"water_level_percent\":" << water << ",\"status\":" << status
+        << ",\"running\":" << (running ? "true" : "false") << ",\"available\":" << (available ? "true" : "false")
+        << ",\"faults\":" << faultsJson(values) << '}';
+    const auto text = json.str(); return {text.begin(), text.end()};
+}
 void appendLength(std::vector<std::uint8_t>& out, std::size_t n) { do { auto b = static_cast<std::uint8_t>(n % 128); n /= 128; if (n) b |= 0x80; out.push_back(b); } while (n); }
 void putString(std::vector<std::uint8_t>& out, const std::string& s) { out.push_back(s.size() >> 8); out.push_back(s.size()); out.insert(out.end(), s.begin(), s.end()); }
 void sendAll(int fd, const std::vector<std::uint8_t>& bytes) { for (std::size_t sent = 0; sent < bytes.size();) { const auto n = send(fd, bytes.data() + sent, bytes.size() - sent, 0); if (n <= 0) throw std::runtime_error("MQTT socket write failed"); sent += n; } }
@@ -58,7 +104,7 @@ void printHex(const std::vector<std::uint8_t>& bytes) {
 }
 int main(int argc, char** argv) {
     try {
-        const auto inverter = loadInverter(argc > 1 ? argv[1] : "inverter_data.txt"); const auto encrypted = encrypt(pack(inverter));
+        const auto telemetry = loadTelemetry(argc > 1 ? argv[1] : "inverter_data.txt"); const auto encrypted = encrypt(telemetry);
         const char* host = std::getenv("MQTT_HOST"); if (!host) host = "127.0.0.1";
         addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; addrinfo* addresses = nullptr;
         if (getaddrinfo(host, "1883", &hints, &addresses) != 0) throw std::runtime_error("Cannot resolve MQTT_HOST");

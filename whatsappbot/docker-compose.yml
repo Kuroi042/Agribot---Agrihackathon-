@@ -8,6 +8,10 @@ services:
       - .env
     environment:
       AGRIBOT_DB_PATH: /data/agribot.db
+      MQTT_HOST: host.docker.internal
+      MQTT_PORT: "1883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - agribot-data:/data
 
@@ -20,6 +24,10 @@ services:
       - .env
     environment:
       AGRIBOT_DB_PATH: /data/agribot.db
+      MQTT_HOST: host.docker.internal
+      MQTT_PORT: "1883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - agribot-data:/data
     depends_on:
