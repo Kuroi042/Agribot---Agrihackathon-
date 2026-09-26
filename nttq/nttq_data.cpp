@@ -10,10 +10,10 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-constexpr char kHost[] = "127.0.0.1";
 constexpr int kPort = 1883;
 constexpr char kTopic[] = "inv/1/encrypted";
 constexpr char kPassphrase[] = "change-this-demo-passphrase"; // Change in both programs.
@@ -59,10 +59,16 @@ void printHex(const std::vector<std::uint8_t>& bytes) {
 int main(int argc, char** argv) {
     try {
         const auto inverter = loadInverter(argc > 1 ? argv[1] : "inverter_data.txt"); const auto encrypted = encrypt(pack(inverter));
-        const int fd = socket(AF_INET, SOCK_STREAM, 0); if (fd < 0) throw std::runtime_error("Socket creation failed"); sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(kPort); inet_pton(AF_INET, kHost, &address.sin_addr);
-        std::cout << "[debug] Connecting to Mosquitto at " << kHost << ':' << kPort << "...\n";
-        if (connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
+        const char* host = std::getenv("MQTT_HOST"); if (!host) host = "127.0.0.1";
+        addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; addrinfo* addresses = nullptr;
+        if (getaddrinfo(host, "1883", &hints, &addresses) != 0) throw std::runtime_error("Cannot resolve MQTT_HOST");
+        const int fd = socket(addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
+        std::cout << "[debug] Connecting to Mosquitto at " << host << ':' << kPort << "...\n";
+        if (fd < 0 || connect(fd, addresses->ai_addr, addresses->ai_addrlen) != 0) {
+            freeaddrinfo(addresses);
             throw std::runtime_error("Cannot connect to Mosquitto on port 1883");
+        }
+        freeaddrinfo(addresses);
         connectMqtt(fd);
         std::cout << "[debug] MQTT CONNECT accepted by Mosquitto.\n";
         std::vector<std::uint8_t> body; putString(body, kTopic); body.insert(body.end(), encrypted.begin(), encrypted.end());

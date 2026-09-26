@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start Mosquitto plus the broker container, rebuilding the broker if needed.
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$script_dir"
+
+# Start Mosquitto; its image also contains the decrypting nttq broker.
 docker compose up -d --build
 
-echo "Mosquitto and nttq-broker are running. Waiting for broker output..."
+echo "Mosquitto and its embedded nttq broker are running. Waiting for output..."
 echo "In another terminal, run:"
-echo "  cd /home/kenshin/Desktop/DataProject/nttq && bash run_encrypted_mqtt_demo.sh"
+echo "  bash \"$script_dir/../nttq/run_encrypted_mqtt_demo.sh\""
 echo
 
-docker compose logs -f broker
+docker compose logs -f mosquitto

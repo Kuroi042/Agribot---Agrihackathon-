@@ -1,0 +1,3 @@
+# Runtime state is mounted when the container starts; it is not image input.
+mosquitto/data/
+mosquitto/log/
