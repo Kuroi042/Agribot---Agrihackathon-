@@ -1,0 +1,29 @@
+services:
+  mqtt-ingestor:
+    build: .
+    container_name: agribot_mqtt_ingestor
+    restart: unless-stopped
+    command: ["python", "mqtt_ingestor.py"]
+    env_file:
+      - .env
+    environment:
+      AGRIBOT_DB_PATH: /data/agribot.db
+    volumes:
+      - agribot-data:/data
+
+  bot:
+    build: .
+    container_name: agribot_telegram_bot
+    restart: unless-stopped
+    command: ["python", "bot.py"]
+    env_file:
+      - .env
+    environment:
+      AGRIBOT_DB_PATH: /data/agribot.db
+    volumes:
+      - agribot-data:/data
+    depends_on:
+      - mqtt-ingestor
+
+volumes:
+  agribot-data:
