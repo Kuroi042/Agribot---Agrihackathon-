@@ -4,7 +4,7 @@ set -euo pipefail
 # Publish the current inverter file every five seconds.  Resolve all paths from
 # this script, so it can be launched from any working directory.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-inverter_file="${1:-$script_dir/inverter_data.txt}"
+inverter_file="${1:-$script_dir/real_inverter_data.txt}"
 publish_interval_seconds="${PUBLISH_INTERVAL_SECONDS:-5}"
 
 if [[ ! -f "$inverter_file" ]]; then

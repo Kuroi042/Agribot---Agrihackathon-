@@ -28,6 +28,10 @@ def initialize_database() -> None:
                 code TEXT PRIMARY KEY, message TEXT NOT NULL,
                 active INTEGER NOT NULL, updated_at TEXT NOT NULL)"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS user_preferences (
+                chat_id INTEGER PRIMARY KEY, language TEXT NOT NULL)"""
+        )
 
 
 def save_state(payload: dict[str, Any], updated_at: str) -> None:
@@ -74,3 +78,21 @@ def get_faults(active_only: bool = True) -> list[dict[str, Any]]:
     query += " ORDER BY code"
     with connect() as connection:
         return [dict(row) for row in connection.execute(query).fetchall()]
+
+
+def set_language(chat_id: int, language: str) -> None:
+    with connect() as connection:
+        connection.execute(
+            """INSERT INTO user_preferences (chat_id, language) VALUES (?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET language=excluded.language""",
+            (chat_id, language),
+        )
+
+
+def get_language(chat_id: int) -> str:
+    initialize_database()
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT language FROM user_preferences WHERE chat_id=?", (chat_id,)
+        ).fetchone()
+    return str(row["language"]) if row else "en"

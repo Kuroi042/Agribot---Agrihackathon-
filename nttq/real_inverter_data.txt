@@ -1,0 +1,27 @@
+# Realistic example telemetry for a solar irrigation-pump inverter.
+# This is representative sample data, not a reading from a specific installed unit.
+# Keep the key names unchanged: nttq_data reads this file and securely forwards it to the bot.
+inverter_id=1
+dc_voltage_v=485.2
+ac_voltage_v=229.8
+ac_power_w=1540
+frequency_hz=42.0
+current_a=7.1
+power_factor=0.92
+battery_percent=18
+temperature_c=78.4
+rotation_rpm=1260
+water_level_percent=14
+status=1
+running=true
+available=true
+# Extra operating data displayed in the bot's Pump status view.
+solar_power_w=1675
+daily_energy_kwh=9.6
+total_energy_kwh=1842.3
+pump_flow_m3h=12.8
+pump_pressure_bar=2.4
+operating_mode=irrigation
+runtime_hours=316.5
+# Inverter fault codes. Check them with: python3 check_inverter_faults.py real_inverter_data.txt
+faults=E056,E065,E070

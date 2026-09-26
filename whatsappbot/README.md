@@ -5,6 +5,11 @@ Two processes cooperate through a small SQLite database:
 - `mqtt_ingestor.py` receives telemetry, validates it, and derives faults.
 - `bot.py` provides the Telegram status and control menu and publishes commands.
 
+Use **Language / اللغة / Lingua** in the bot's main menu to select Arabic or
+Italian. The choice is stored for that Telegram chat. Pump-status labels and
+fault descriptions are translated; device measurements retain their standard
+numeric units (V, A, kW, °C, m³/h, and bar).
+
 ## MQTT contract
 
 The decrypting Mosquitto broker publishes validated JSON to
@@ -14,14 +19,28 @@ The decrypting Mosquitto broker publishes validated JSON to
 {"inverter_id":1,"dc_voltage_v":378.5,"ac_voltage_v":230,"ac_power_w":2450,"frequency_hz":50,"current_a":10.7,"power_factor":0.95,"battery_percent":82,"temperature_c":34.5,"rotation_rpm":1450,"water_level_percent":62,"status":1,"running":true,"available":true,"faults":[]}
 ```
 
-Set the fields in `../nttq/inverter_data.txt`. The sender rejects values outside
+Set the fields in `../nttq/real_inverter_data.txt`. The sender rejects values outside
 these input ranges: DC voltage 0–1000 V, AC voltage 0–300 V, frequency 0–60 Hz,
 current 0–500 A, power factor 0–1, battery/water 0–100%, temperature −40–125 °C,
 and rotation 0–10,000 RPM. These are application validation limits, not a
 certification claim for a particular electrical standard.
 
+`../nttq/real_inverter_data.txt` is a realistic fault-testing example. Preview its
+bot-ready JSON with `python3 ../nttq/format_inverter_data.py ../nttq/real_inverter_data.txt`,
+or use `--summary` for a concise operator view. Send it through the encrypted
+publisher with `../nttq/run_encrypted_mqtt_demo.sh ../nttq/real_inverter_data.txt`
+(run from the `whatsappbot` directory); it builds the sender automatically and
+the bot will then show the same readings in **Pump status**.
+
 Device fault codes are comma-separated in `faults`, for example
 `OVER_TEMPERATURE,LOW_WATER`. They appear in the Telegram **Show faults** view.
+The realistic sample uses `E056,E065,E070`; run
+`python3 ../nttq/check_inverter_faults.py ../nttq/real_inverter_data.txt` to
+print their descriptions and first actions. Verify each code against the manual
+for the installed inverter model before relying on the local catalog.
+Optional `solar_power_w`, `daily_energy_kwh`, `total_energy_kwh`,
+`pump_flow_m3h`, `pump_pressure_bar`, `runtime_hours`, and `operating_mode`
+appear in **Pump status**.
 
 The bot publishes control messages to `agribot/inverter/command`:
 

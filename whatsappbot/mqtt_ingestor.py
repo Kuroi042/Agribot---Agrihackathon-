@@ -21,6 +21,9 @@ MIN_BATTERY_PERCENT = float(os.getenv("MIN_BATTERY_PERCENT", "20"))
 MIN_WATER_LEVEL_PERCENT = float(os.getenv("MIN_WATER_LEVEL_PERCENT", "20"))
 
 DEVICE_FAULT_MESSAGES = {
+    "E056": "Low battery voltage: reduce demand and check battery charge, charging source, and terminals.",
+    "E065": "Inverter over-temperature: reduce load or stop the pump, allow cooling, and check airflow and fans.",
+    "E070": "Low water level: stop the pump or keep it stopped until the source-water level is safely restored.",
     "OVER_CURRENT": "Pump current is above the inverter's permitted limit.",
     "DRY_RUN": "Dry-run protection has tripped; the pump may have lost prime or source water.",
     "OVERLOAD": "The pump or motor is overloaded.",
@@ -74,11 +77,19 @@ def normalize(data: dict[str, Any]) -> dict[str, Any]:
         "available": boolean(data, "available", True),
         "rotation_rpm": number(data, "rotation_rpm", 0, 10000),
         "water_level_percent": number(data, "water_level_percent", 0, 100),
+        "solar_power_w": number(data, "solar_power_w", 0, 100000),
+        "daily_energy_kwh": number(data, "daily_energy_kwh", 0, 100000),
+        "total_energy_kwh": number(data, "total_energy_kwh", 0, 10000000),
+        "pump_flow_m3h": number(data, "pump_flow_m3h", 0, 10000),
+        "pump_pressure_bar": number(data, "pump_pressure_bar", 0, 1000),
+        "runtime_hours": number(data, "runtime_hours", 0, 1000000),
+        "operating_mode": data.get("operating_mode") if isinstance(data.get("operating_mode"), str) else None,
     }
 
 
 def derive_faults(state: dict[str, Any], device_faults: list[Any]) -> list[dict[str, str]]:
     faults: dict[str, str] = {}
+    reported_codes = {item.upper().replace(" ", "_") for item in device_faults if isinstance(item, str)}
     current = state.get("current_a")
     voltage = state.get("dc_voltage_v")
     temperature = state.get("temperature_c")
@@ -104,6 +115,10 @@ def derive_faults(state: dict[str, Any], device_faults: list[Any]) -> list[dict[
             faults[code] = DEVICE_FAULT_MESSAGES.get(code, item)
         elif isinstance(item, dict) and item.get("code"):
             faults[str(item["code"])] = str(item.get("message", item["code"]))
+    # Do not show a threshold warning twice when the device supplied its equivalent E-code.
+    for device_code, derived_code in {"E056": "LOW_BATTERY", "E065": "OVER_TEMPERATURE", "E070": "LOW_WATER"}.items():
+        if device_code in reported_codes:
+            faults.pop(derived_code, None)
     return [{"code": code, "message": message} for code, message in faults.items()]
 
 

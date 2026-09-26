@@ -42,6 +42,18 @@ double measurement(const std::map<std::string, std::string>& values, const char*
     if (value < minimum || value > maximum) throw std::runtime_error(std::string(key) + " is outside its permitted range");
     return value;
 }
+std::string optionalMeasurement(const std::map<std::string, std::string>& values, const char* key, double minimum, double maximum) {
+    if (values.find(key) == values.end()) return "null";
+    std::ostringstream output; output << std::fixed << std::setprecision(1) << measurement(values, key, minimum, maximum);
+    return output.str();
+}
+std::string optionalMode(const std::map<std::string, std::string>& values) {
+    const auto it = values.find("operating_mode");
+    if (it == values.end()) return "null";
+    const auto& mode = it->second;
+    if (mode.empty() || !std::all_of(mode.begin(), mode.end(), [](unsigned char c) { return std::islower(c) || c == '_'; })) throw std::runtime_error("operating_mode must use lowercase letters and underscores");
+    return '"' + mode + '"';
+}
 bool flag(const std::map<std::string, std::string>& values, const char* key, bool fallback) {
     const auto it = values.find(key); if (it == values.end()) return fallback;
     if (it->second == "true" || it->second == "1") return true;
@@ -110,6 +122,13 @@ std::vector<std::uint8_t> loadTelemetry(const std::string& path) {
         << ",\"power_factor\":" << factor << ",\"battery_percent\":" << battery << ",\"temperature_c\":" << temperature
         << ",\"rotation_rpm\":" << rpm << ",\"water_level_percent\":" << water << ",\"status\":" << status
         << ",\"running\":" << (running ? "true" : "false") << ",\"available\":" << (available ? "true" : "false")
+        << ",\"solar_power_w\":" << optionalMeasurement(values, "solar_power_w", 0, 100000)
+        << ",\"daily_energy_kwh\":" << optionalMeasurement(values, "daily_energy_kwh", 0, 100000)
+        << ",\"total_energy_kwh\":" << optionalMeasurement(values, "total_energy_kwh", 0, 10000000)
+        << ",\"pump_flow_m3h\":" << optionalMeasurement(values, "pump_flow_m3h", 0, 10000)
+        << ",\"pump_pressure_bar\":" << optionalMeasurement(values, "pump_pressure_bar", 0, 1000)
+        << ",\"runtime_hours\":" << optionalMeasurement(values, "runtime_hours", 0, 1000000)
+        << ",\"operating_mode\":" << optionalMode(values)
         << ",\"faults\":" << faultsJson(values) << '}';
     const auto text = json.str(); return {text.begin(), text.end()};
 }
