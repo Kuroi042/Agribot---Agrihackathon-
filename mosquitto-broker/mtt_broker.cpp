@@ -1,5 +1,6 @@
 #include <array>
 #include <cstdint>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <cstdlib>
@@ -32,6 +33,35 @@ void publishTelemetry(int fd, const std::vector<std::uint8_t>& plain) {
     packet.insert(packet.end(), body.begin(), body.end());
     sendAll(fd, packet);
 }
+std::string progressBar(int percent) {
+    constexpr int width = 24;
+    const int filled = percent * width / 100;
+    return "[" + std::string(filled, '#') + std::string(width - filled, '-') + "] " + std::to_string(percent) + "%";
+}
+std::string currentTime() {
+    const std::time_t now = std::time(nullptr); std::tm local{};
+    localtime_r(&now, &local);
+    char text[32]; std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local);
+    return text;
+}
+void showDashboard(std::size_t processed, std::size_t encryptedSize, std::size_t telemetrySize,
+                   int progress, const std::string& updatedAt, const std::string& status) {
+    constexpr int width = 54;
+    const auto row = [](const std::string& text) {
+        std::cout << "| " << std::left << std::setw(width - 2) << text << "|\n";
+    };
+    std::cout << "\033[2J\033[H+" << std::string(width, '-') << "+\n";
+    row("📥 MOSQUITTO BROKER DASHBOARD");
+    std::cout << "+" << std::string(width, '-') << "+\n";
+    row("🔐 Last encrypted packet: " + std::to_string(encryptedSize) + " bytes");
+    row("📡 Last telemetry packet: " + std::to_string(telemetrySize) + " bytes");
+    row("📦 Packets processed: " + std::to_string(processed));
+    std::cout << "+" << std::string(width, '-') << "+\n";
+    row("🚀 Forwarded: " + progressBar(progress));
+    row("🕒 Last update: " + updatedAt);
+    row(status);
+    std::cout << "+" << std::string(width, '-') << "+\n" << std::flush;
+}
 int main() { try {
     std::cout.setf(std::ios::unitbuf);
     const char* host = std::getenv("MQTT_HOST"); if (!host) host = "127.0.0.1";
@@ -40,20 +70,25 @@ int main() { try {
     const int fd = socket(addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
     if (fd < 0 || connect(fd, addresses->ai_addr, addresses->ai_addrlen) != 0) { freeaddrinfo(addresses); throw std::runtime_error("Cannot connect to Mosquitto on port 1883"); }
     freeaddrinfo(addresses); connectMqtt(fd); std::vector<std::uint8_t> body{0, 1}; putString(body, kTopic); body.push_back(0); std::vector<std::uint8_t> sub{0x82}; appendLength(sub, body.size()); sub.insert(sub.end(), body.begin(), body.end()); sendAll(fd, sub); receivePacket(fd);
-    std::cout << "[receiver] Listening for encrypted MQTT data on " << kTopic << "...\n";
+    std::size_t processed = 0, encryptedSize = 0, telemetrySize = 0;
+    std::string lastUpdate = "--";
+    showDashboard(processed, encryptedSize, telemetrySize, 0, lastUpdate, "🟡 Status: Waiting for data");
     for (;;) {
         const auto packet = receivePacket(fd);
         if ((packet.front() & 0xf0) != 0x30) continue;
         try {
             const auto encryptedRecord = publishPayload(packet);
-            std::cout << "[receiver] Received encrypted MQTT payload (" << encryptedRecord.size() << " bytes). Starting decryption...\n";
+            showDashboard(processed, encryptedRecord.size(), telemetrySize, 0, lastUpdate, "🟡 Status: Processing");
             const auto plain = decrypt(encryptedRecord);
             if (plain.size() < 2 || plain.size() > 4096 || plain.front() != '{' || plain.back() != '}') throw std::runtime_error("Invalid decrypted telemetry JSON");
             publishTelemetry(fd, plain);
-            std::cout << "Decrypted inverter telemetry JSON: " << std::string(plain.begin(), plain.end()) << '\n';
-            std::cout << "[receiver] Published decrypted telemetry to " << kTelemetryTopic << "\n";
+            ++processed;
+            encryptedSize = encryptedRecord.size();
+            telemetrySize = plain.size();
+            lastUpdate = currentTime();
+            showDashboard(processed, encryptedSize, telemetrySize, 100, lastUpdate, "🟢 Status: Normal");
         } catch (const std::exception& e) {
-            std::cerr << "[receiver] Ignoring invalid encrypted MQTT payload: " << e.what() << '\n';
+            showDashboard(processed, encryptedSize, telemetrySize, 0, currentTime(), "🔴 Status: Invalid packet");
         }
     }
 } catch (const std::exception& e) { std::cerr << "Broker error: " << e.what() << '\n'; return 1; } }
