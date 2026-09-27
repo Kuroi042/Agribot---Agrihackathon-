@@ -1,8 +1,8 @@
 # 🌱 Smart Agricultural Supervision System
 
-A **low-cost IoT agricultural monitoring system** that allows farmers and supervisors to monitor farm equipment remotely through a **Telegram bot**.
+A **low-cost IoT agricultural monitoring system** developed for **AgriHackathon Morocco 2026** under the **AgriNovators** team, with contributions from **[hafidara](https://github.com/hafidara)** and **[Nabil](https://github.com/theswoord)**.
 
-The system collects telemetry from field devices using **LoRa**, forwards the data through **MQTT** to a **Mosquitto broker**, then authenticates, decrypts, and processes the data before sending useful information to Telegram.
+The system allows farmers and supervisors to monitor farm equipment remotely through a **Telegram bot**. Field telemetry is collected using **LoRa**, transmitted through **MQTT** to a **Mosquitto broker**, then authenticated, decrypted, and processed before being delivered to Telegram [link](https://t.me/Theswoord_bot).
 
 ### 🚀 Features
 
@@ -44,3 +44,8 @@ Farmer / Supervisor
 Provide farmers with a **simple, affordable, and accessible farm supervision system** without requiring a dedicated mobile application.
 
 **LoRa → MQTT → Mosquitto → Processing → Telegram**
+
+### 👥 Team
+
+**AgriNovators**
+AgriHackathon Morocco 2026
