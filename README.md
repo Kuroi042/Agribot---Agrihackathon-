@@ -1,43 +1,46 @@
-Smart Agricultural Supervision System
+# 🌱 Smart Agricultural Supervision System
 
-This project is a low-cost IoT-based agricultural supervision system designed to monitor farm equipment and field conditions remotely through a simple Telegram interface.
+A **low-cost IoT agricultural monitoring system** that allows farmers and supervisors to monitor farm equipment remotely through a **Telegram bot**.
 
-The system uses LoRa communication to collect telemetry and sensor data from devices deployed in the field. The collected data is transmitted as MQTT packets through a LoRa gateway to an MQTT broker (Mosquitto).
+The system collects telemetry from field devices using **LoRa**, forwards the data through **MQTT** to a **Mosquitto broker**, then authenticates, decrypts, and processes the data before sending useful information to Telegram.
 
-The MQTT broker acts as the central communication layer, receiving and routing the incoming messages to the monitoring application. The application then authenticates and decrypts the protected payload, validates the received data, processes the telemetry, and converts it into meaningful information.
+### 🚀 Features
 
-The processed information is made available through a Telegram bot, allowing the farmer or supervisor to monitor the farm remotely without requiring a dedicated mobile application.
+* 📡 LoRa-based field communication
+* 📦 MQTT & Mosquitto messaging
+* 🔐 Data authentication and decryption
+* 📊 Real-time telemetry and statistics
+* 💧 Irrigation monitoring
+* ⚡ Equipment status
+* 🚨 Fault detection and alerts
+* 📋 Automated reports
+* 🤖 Telegram-based supervision
 
-The Telegram bot can provide:
+### 🏗️ Architecture
 
-📊 Real-time equipment and sensor telemetry
-💧 Irrigation and water-related information
-⚡ Equipment operating status
-🚨 Fault and abnormal-condition alerts
-📈 Statistics and historical measurements
-📋 Daily and periodic farm reports
-🔧 Equipment fault codes and diagnostic information
-📡 Remote monitoring through a simple Telegram interface
-System Architecture
-
-Field Sensors / Equipment
-↓
-LoRa Communication
-↓
-LoRa Gateway
-↓
-MQTT Packets
-↓
-Mosquitto MQTT Broker
-↓
-Authentication / Decryption / Data Processing
-↓
-Monitoring Application
-↓
-Telegram Bot
-↓
+```text
+Sensors / Equipment
+        ↓
+      LoRa
+        ↓
+   LoRa Gateway
+        ↓
+      MQTT
+        ↓
+Mosquitto Broker
+        ↓
+Authentication
+& Decryption
+        ↓
+ Data Processing
+        ↓
+   Telegram Bot
+        ↓
 Farmer / Supervisor
+```
 
-The main objective is to provide farmers and agricultural supervisors with an affordable, lightweight, and easy-to-use monitoring solution that avoids the complexity and cost of traditional farm-management platforms.
+### 🎯 Objective
 
-Instead of requiring users to continuously access a dedicated dashboard, the system delivers important information directly through Telegram, making farm supervision accessible from a standard smartphone.
+Provide farmers with a **simple, affordable, and accessible farm supervision system** without requiring a dedicated mobile application.
+
+**LoRa → MQTT → Mosquitto → Processing → Telegram**
